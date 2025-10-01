@@ -1,6 +1,6 @@
 // pages/api/webhook.js
 export default async function handler(req, res) {
-  // Autorisations CORS (pour ton localhost et Netlify)
+  // Autorisation CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -14,10 +14,10 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { type, payload } = req.body || {};
+    const { message } = req.body || {};
 
-    if (!type || !payload) {
-      return res.status(400).json({ error: "Requête invalide : { type, payload } attendu" });
+    if (!message) {
+      return res.status(400).json({ error: "Le champ 'message' est requis" });
     }
 
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -27,22 +27,17 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: "Configuration Telegram manquante" });
     }
 
-    // Construire le message selon le type
-    let text = "";
-    if (type === "contact_info") {
-      text = `📨 Étape 1 — Coordonnées\n\n👤 Nom : ${payload.nom}\n👤 Prénom : ${payload.prenom}`;
-    } else if (type === "phone") {
-      text = `📱 Étape 2 — Téléphone\n\nNuméro : ${payload.phone}`;
-    } else {
-      return res.status(400).json({ error: "Type inconnu. Utilisez contact_info ou phone." });
-    }
-
     // Envoi à Telegram
     const telegramUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
+
     const response = await fetch(telegramUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text }),
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: message,
+        parse_mode: "HTML", // permet d’ajouter du style si besoin
+      }),
     });
 
     if (!response.ok) {
